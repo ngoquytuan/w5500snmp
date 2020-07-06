@@ -12,13 +12,11 @@
 #include "stm32f10x.h"                  // Device header
 #include "snmp_custom.h"
 //Update gps and power status
-extern uint8_t gps1_stt;
-extern uint8_t gps2_stt;
-extern uint8_t power1_stt;
-extern uint8_t power2_stt;
+#include "crc16CCITT.h"  
 extern int8_t lostSignal;
+int8_t dmeconn = 0;
+int8_t vorconn = 0;
 
-void get_gpsStatus_all(void *ptr, uint8_t *len);
 
 void setMyValue(int value)	//snmpset -v 1 -c public 192.168.1.246 .1.3.6.1.4.1.6.1.2 i 123456
 {
@@ -30,28 +28,336 @@ void getMyValue()						//snmpget -v 1 -c public 192.168.1.246 .1.3.6.1.4.1.6.1.2
 	printf("getMyValue\r\n");
 	//return 301188;
 }*/
-void get_GPS_stt(void *ptr, uint8_t *len);
+void get_conn_stt(void *ptr, uint8_t *len);
 void get_POWER_stt(void *ptr, uint8_t *len);
-void get_GPS_stt(void *ptr, uint8_t *len)
-{
-	*len = sprintf((char *)ptr, "GPS1: [%s]; GPS2: [%s]", gps1_stt?"ON":"OFF", gps2_stt?"ON":"OFF");
-}
 
+void get_conn_stt(void *ptr, uint8_t *len)//Kiem tra ket noi den VOR/DME
+{
+	*len = sprintf((char *)ptr, "VOR1150A: %s; DME1119A: %s", vorconn?"Connected":"NC", dmeconn?"Connected":"NC");
+}
+/*
 void get_POWER_stt(void *ptr, uint8_t *len)
 {
-	*len = sprintf((char *)ptr, "POWER1: [%s]; POWER2: [%s]", power1_stt?"ON":"OFF", power2_stt?"ON":"OFF");
+	uint8_t gps1_stt;
+	*len = sprintf((char *)ptr, "POWER1: [%s]; POWER2: [%s]", gps1_stt?"ON":"OFF", gps1_stt?"ON":"OFF");
 }
 
 void get_gpsmaster_stt(void *ptr, uint8_t *len)
 {
 	*len = sprintf((char *)ptr, "GPS master status: %s", lostSignal?"OK":"LOST SIGNAL");
 }
+*/
+void getDevice(void *ptr, uint8_t *len)
+{
+	uint8_t stt;
+	//*len = sprintf((char *)ptr, "POWER1: [%s]; POWER2: [%s]", stt?"ON":"OFF", stt?"ON":"OFF");
+	*len = sprintf((char *)ptr, "VOR => COM1, DME => COM2");
+}
+void DmeAlertLocal(void *ptr, uint8_t *len)
+{
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}
+	
+	*len = sprintf((char *)ptr, "%s %s", dmestatus.MaintenanceAlert?"Alert":"", dmestatus.LocalControl?"Local":"");
+}
+void DmeMain(void *ptr, uint8_t *len)
+{
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}
+	
+	*len = sprintf((char *)ptr, "Main %s", dmestatus.Tx1Main?"Tx1":"Tx2");
+}
+void DmeAntenna(void *ptr, uint8_t *len)
+{
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}
+	if((dmestatus.Tx1Ant == 1)&&(dmestatus.Tx1On == 1)) 					*len = sprintf((char *)ptr, "Antenna Tx1");
+	else if((dmestatus.Tx1Ant == 0) &&(dmestatus.Tx2On == 1))			*len = sprintf((char *)ptr, "Antenna Tx2");
+	else *len = sprintf((char *)ptr, "Antenna not connect");
+}
+void DmeLoad(void *ptr, uint8_t *len)
+{
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}
+	if((dmestatus.i9b5 == 1)&&(dmestatus.Tx2On == 1)) 						*len = sprintf((char *)ptr, "LOAD Tx2");
+	else if((dmestatus.i9b5 == 0)&&(dmestatus.Tx1On == 1))				*len = sprintf((char *)ptr, "LOAD Tx1");
+	else *len = sprintf((char *)ptr, "Load not connect");
+}
+void DmeOff(void *ptr, uint8_t *len)
+{
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}
+	
+		if((dmestatus.Tx1On == 0)&&(dmestatus.Tx2On == 0)) 	*len = sprintf((char *)ptr, "OFF All");
+		else if(dmestatus.Tx1On == 0)												*len = sprintf((char *)ptr, "OFF Tx1");		
+		else if(dmestatus.Tx2On == 0)												*len = sprintf((char *)ptr, "OFF Tx2");
+		else *len = sprintf((char *)ptr, "On All");
+}
+void DmeIntegral(void *ptr, uint8_t *len)
+{
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}
+	
+		
+		if(dmestatus.IntPriAlarm == 1) *len = sprintf((char *)ptr, "Integral PriAlarm, %s, %s",dmestatus.i11b0?"SecAlarm":"",dmestatus.IntMonBypass?"Bypass":"");
+		else *len = sprintf((char *)ptr, "Integral Normal, %s, %s",dmestatus.i11b0?"SecAlarm":"",dmestatus.IntMonBypass?"Bypass":"");
+		
+}
+void DmeStandby(void *ptr, uint8_t *len)
+{
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}
+	
+		
+		if(dmestatus.i10b3 == 1) *len = sprintf((char *)ptr, "Standby PriAlarm, %s, %s",dmestatus.i11b1?"SecAlarm":"",dmestatus.i10b5?"Bypass":"");
+		else *len = sprintf((char *)ptr, "Standby Normal, %s, %s",dmestatus.i11b1?"SecAlarm":"",dmestatus.i10b5?"Bypass":"");
+		
+}
+void DmeDelayUs(void *ptr, uint8_t *len)
+{
+	float value;
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}
+	value = dmestatus.DelayUs/100.0;
+	*len = sprintf((char *)ptr, "Delay: %.2f us", value);
+}
+
+void dmeSpacing(void *ptr, uint8_t *len)
+{
+	float value;
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}
+	value = dmestatus.SpacingUs/100.0;
+	*len = sprintf((char *)ptr, "Spacing: %.2f us", value);
+}
+
+void dmeTxPower(void *ptr, uint8_t *len)
+{
+	float value;
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}
+	value = dmestatus.TxPowerWatts/1.0;
+	*len = sprintf((char *)ptr, "TxPower: %.0f Watts", value);
+}
+
+void dmeERP(void *ptr, uint8_t *len)
+{
+	float value;
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}
+	value = dmestatus.ERP/10.0;
+	*len = sprintf((char *)ptr, "ERP: %.1f dB", value);
+}
+void dmeEfficiency(void *ptr, uint8_t *len)
+{
+	float value;
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}
+	value = dmestatus.Efficiency/10.0;
+	*len = sprintf((char *)ptr, "Efficiency: %.1f %%", value);
+}
+void dmePRF(void *ptr, uint8_t *len)
+{
+	float value;
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}
+	value = dmestatus.PRFppps/1.0;
+	*len = sprintf((char *)ptr, "PRF: %.0f ppps", value);
+}
+
+void dmeInfo(void *ptr, uint8_t *len)
+{
+	if(dmeconn ==0) //ko co ket noi den DME
+		{
+			*len = sprintf((char *)ptr, "No connection to DME");
+			return;
+		}	
+	*len = sprintf((char *)ptr, "Dme info %2d/%2d/%2d %2d:%2d:%2d", dmestatus.month,dmestatus.date,dmestatus.year,dmestatus.hour,dmestatus.min,dmestatus.sec);
+}
+
+void vorAlertLocal(void *ptr, uint8_t *len)
+{
+	if(vorconn ==0) //ko co ket noi den Vor
+		{
+			*len = sprintf((char *)ptr, "No connection to Vor");
+			return;
+		}
+	
+	*len = sprintf((char *)ptr, "%s %s", vorstatus.Alert?"Alert":"", vorstatus.LocalControl?"Local":"");
+}
+void vorMain(void *ptr, uint8_t *len)
+{
+	if(vorconn ==0) //ko co ket noi den Vor
+		{
+			*len = sprintf((char *)ptr, "No connection to Vor");
+			return;
+		}
+	
+	*len = sprintf((char *)ptr, "Main %s", vorstatus.Tx1Main?"Tx1":"Tx2");
+}
+
+void vorAntenna(void *ptr, uint8_t *len)
+{
+	if(vorconn ==0) //ko co ket noi den Vor
+		{
+			*len = sprintf((char *)ptr, "No connection to Vor");
+			return;
+		}
+	if((vorstatus.Tx1Ant == 1)&&(vorstatus.Tx1On == 1)) 					*len = sprintf((char *)ptr, "Antenna Tx1");
+	else if((vorstatus.Tx1Ant == 0) &&(vorstatus.Tx2On == 1))			*len = sprintf((char *)ptr, "Antenna Tx2");
+	else *len = sprintf((char *)ptr, "Antenna not connect");
+}
+void vorLoad(void *ptr, uint8_t *len)
+{
+	if(vorconn ==0) //ko co ket noi den Vor
+		{
+			*len = sprintf((char *)ptr, "No connection to Vor");
+			return;
+		}
+	if((vorstatus.i9b5 == 1)&&(vorstatus.Tx2On == 1)) 						*len = sprintf((char *)ptr, "LOAD Tx2");
+	else if((vorstatus.i9b5 == 0)&&(vorstatus.Tx1On == 1))				*len = sprintf((char *)ptr, "LOAD Tx1");
+	else *len = sprintf((char *)ptr, "Load not connect");
+}
+void vorOff(void *ptr, uint8_t *len)
+{
+	if(vorconn ==0) //ko co ket noi den Vor
+		{
+			*len = sprintf((char *)ptr, "No connection to Vor");
+			return;
+		}
+	
+		if((vorstatus.Tx1On == 0)&&(vorstatus.Tx2On == 0)) 	*len = sprintf((char *)ptr, "OFF All");
+		else if(vorstatus.Tx1On == 0)												*len = sprintf((char *)ptr, "OFF Tx1");		
+		else if(vorstatus.Tx2On == 0)												*len = sprintf((char *)ptr, "OFF Tx2");
+		else *len = sprintf((char *)ptr, "On All");
+}
+void vorIntegral(void *ptr, uint8_t *len)
+{
+	if(vorconn ==0) //ko co ket noi den Vor
+		{
+			*len = sprintf((char *)ptr, "No connection to Vor");
+			return;
+		}
+	
+		
+		if(vorstatus.IntPriAlarm == 1) *len = sprintf((char *)ptr, "Integral PriAlarm, %s, %s","SecAlarm ??",vorstatus.IntMonBypass?"Bypass":"");
+		else *len = sprintf((char *)ptr, "Integral Normal, %s, %s","SecAlarm ??",vorstatus.IntMonBypass?"Bypass":"");
+		
+}
+
+void vorAzimuthAngle(void *ptr, uint8_t *len)
+{
+	float value;
+	if(vorconn ==0) //ko co ket noi den Vor
+		{
+			*len = sprintf((char *)ptr, "No connection to Vor");
+			return;
+		}
+	value = vorstatus.AzimuthAngle/100.0;
+	*len = sprintf((char *)ptr, "Azimuth: %.2f degrees", value);
+}
+
+void vorMod30Hz(void *ptr, uint8_t *len)
+{
+	float value;
+	if(vorconn ==0) //ko co ket noi den Vor
+		{
+			*len = sprintf((char *)ptr, "No connection to Vor");
+			return;
+		}
+	value = vorstatus.Mod30Hz/10.0;
+	*len = sprintf((char *)ptr, "30Hz Modulation: %.1f %%", value);
+}
+
+void vorMod9960(void *ptr, uint8_t *len)
+{
+	float value;
+	if(vorconn ==0) //ko co ket noi den Vor
+		{
+			*len = sprintf((char *)ptr, "No connection to Vor");
+			return;
+		}
+	value = vorstatus.Mod9960Hz/10.0;
+	*len = sprintf((char *)ptr, "9960Hz Modulation: %.1f %%", value);
+}
+
+void vorDeviation(void *ptr, uint8_t *len)
+{
+	float value;
+	if(vorconn ==0) //ko co ket noi den Vor
+		{
+			*len = sprintf((char *)ptr, "No connection to Vor");
+			return;
+		}
+	value = vorstatus.Deviation/100.0;
+	*len = sprintf((char *)ptr, "9960Hz Deviation: %.2f ratio", value);
+}
+
+void vorRFlevel(void *ptr, uint8_t *len)
+{
+	float value;
+	if(vorconn ==0) //ko co ket noi den Vor
+		{
+			*len = sprintf((char *)ptr, "No connection to Vor");
+			return;
+		}
+	value = vorstatus.RFlevel/10.0;
+	*len = sprintf((char *)ptr, "RF level: %.1f dB", value);
+}
+void vorInfo(void *ptr, uint8_t *len)
+{
+	if(vorconn ==0) //ko co ket noi den Vor
+		{
+			*len = sprintf((char *)ptr, "No connection to Vor");
+			return;
+		}	
+	*len = sprintf((char *)ptr, "Vor info %2d/%2d/%2d %2d:%2d:%2d", vorstatus.month,vorstatus.date,vorstatus.year,vorstatus.hour,vorstatus.min,vorstatus.sec);
+}
 dataEntryType snmpData[] =
 {
     // System MIB
 	// SysDescr Entry
 	{8, {0x2b, 6, 1, 2, 1, 1, 1, 0},
-	SNMPDTYPE_OCTET_STRING, 30, {"GPS clock time server"},
+	SNMPDTYPE_OCTET_STRING, 30, {"VOR, DME SNMPv1"},
 	NULL, NULL},
 
 	// SysObjectID Entry
@@ -76,18 +382,99 @@ dataEntryType snmpData[] =
 
 	// Location Entry
 	{8, {0x2b, 6, 1, 2, 1, 1, 6, 0},
-	SNMPDTYPE_OCTET_STRING, 30, {"ATTECH"},
+	SNMPDTYPE_OCTET_STRING, 30, {"NCPT"},
 	NULL, NULL},
-  {8, {0x2b, 6, 1, 4, 1, 6, 1, 0},
+	// SysServices
+	{8, {0x2b, 6, 1, 2, 1, 1, 7, 0},
+	SNMPDTYPE_INTEGER, 4, {""},
+	NULL, NULL},
+  {8, {0x2b, 6, 1, 4, 1, 26, 1, 0},//Kiem tra ket noi den COM1,COM2
 	SNMPDTYPE_OCTET_STRING, 40, {""},
-	get_GPS_stt, NULL},
-	{8, {0x2b, 6, 1, 4, 1, 6, 1, 1},
+	get_conn_stt, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 27, 1, 0},//Thong tin cau hinh hoat dong
+	SNMPDTYPE_OCTET_STRING, 40, {"devide info"},
+	NULL, NULL},
+  {8, {0x2b, 6, 1, 4, 1, 27, 1, 1},//Trang thai hoat dong cua thiet bi
+	SNMPDTYPE_OCTET_STRING, 40, {"ok"},
+	NULL, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 0},
 	SNMPDTYPE_OCTET_STRING, 40, {""},
-	get_POWER_stt, NULL},
-	{8, {0x2b, 6, 1, 4, 1, 6, 1, 2},
+	dmeInfo, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 1},//DmeAlertLocal
 	SNMPDTYPE_OCTET_STRING, 40, {""},
-	get_gpsmaster_stt, NULL},
-  
+	DmeAlertLocal, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 2},//DmeMain
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	DmeMain, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 3},//DmeAntenna
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	DmeAntenna, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 4},//DmeLoad
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	DmeLoad, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 5},//DmeOff
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	DmeOff, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 6},//DmeIntegral
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	DmeIntegral, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 7},//DmeStandby
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	DmeStandby, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 8},//Delay
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	DmeDelayUs, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 9},//Spacing
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	dmeSpacing, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 10},//TxPower
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	dmeTxPower, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 11},//ERP
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	dmeERP, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 12},//Efficiency
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	dmeEfficiency, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 28, 1, 13},//PRF
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	dmePRF, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 29, 1, 0},
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	vorInfo, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 29, 1, 1},
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	vorAlertLocal, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 29, 1, 2},
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	vorMain, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 29, 1, 3},
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	vorAntenna, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 29, 1, 4},
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	vorLoad, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 29, 1, 5},
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	vorOff, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 29, 1, 6},
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	vorIntegral, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 29, 1, 7},
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	vorAzimuthAngle, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 29, 1, 8},
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	vorMod30Hz, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 29, 1, 9},
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	vorMod9960, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 29, 1, 10},
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	vorDeviation, NULL},
+	{8, {0x2b, 6, 1, 4, 1, 29, 1, 11},
+	SNMPDTYPE_OCTET_STRING, 40, {""},
+	vorRFlevel, NULL},
 	
 #ifdef _USE_WIZNET_W5500_EVB_
 	// Get the WIZnet W5500-EVB LED Status
@@ -106,10 +493,7 @@ dataEntryType snmpData[] =
 	{8, {0x2b, 6, 1, 4, 1, 6, 1, 2},
 	SNMPDTYPE_INTEGER, 4, {""},
 	NULL, setMyValue},
-	// SysServices
-	{8, {0x2b, 6, 1, 2, 1, 1, 7, 0},
-	SNMPDTYPE_INTEGER, 4, {""},
-	NULL, NULL},
+	
 	// Get the WIZnet W5500-EVB LED Status
 	{8, {0x2b, 6, 1, 4, 1, 6, 1, 0},
 	SNMPDTYPE_OCTET_STRING, 40, {""},
@@ -160,8 +544,34 @@ const int32_t maxData = (sizeof(snmpData) / sizeof(dataEntryType));
 void initTable()
 {
 	// Example integer value for [OID 1.3.6.1.2.1.1.7.0]
-	snmpData[6].u.intval = -15;
-
+	/*
+	sysServices OBJECT-TYPE
+	SYNTAX INTEGER (0..127)
+	MAX-ACCESS read-only
+	STATUS current
+	DESCRIPTION
+	"A value which indicates the set of services that this
+	entity may potentially offer. The value is a sum.
+	This sum initially takes the value zero. Then, for
+	each layer, L, in the range 1 through 7, that this node
+	performs transactions for, 2 raised to (L - 1) is added
+	to the sum. For example, a node which performs only
+	routing functions would have a value of 4 (2^(3-1)).
+	In contrast, a node which is a host offering application
+	services would have a value of 72 (2^(4-1) + 2^(7-1)).
+	Note that in the context of the Internet suite of
+	protocols, values should be calculated accordingly:
+	layer functionality
+	1 physical (e.g., repeaters)
+	2 datalink/subnetwork (e.g., bridges)
+	3 internet (e.g., supports the IP)
+	4 end-to-end (e.g., supports the TCP)
+	7 applications (e.g., supports the SMTP)
+	For systems including OSI protocols, layers 5 and 6
+	may also be counted."
+	*/
+	snmpData[6].u.intval = 72;
+	//snmpData[14].u.intval = 72;
 }
 
 void get_gpsStatus_all(void *ptr, uint8_t *len)

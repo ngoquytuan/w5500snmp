@@ -2,8 +2,11 @@
 #include "stm32f10x.h"                  // Device header
 #include "GPIO_STM32F10x.h"             // Keil::Device:GPIO
 #include "crc16CCITT.h"  
+vor_Status vorstatus;
+dme_Status dmestatus;
+extern int8_t dmeconn;
+extern int8_t vorconn;
 const unsigned int   CRC16_CCITT_SHIFTER = 0x00FF;
-
 const unsigned short CRC16_CCITT_TABLE[] = {
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7, 
     0x8108, 0x9129, 0xA14A, 0xB16B, 0xC18C, 0xD1AD, 0xE1CE, 0xF1EF, 
@@ -38,6 +41,7 @@ const unsigned short CRC16_CCITT_TABLE[] = {
     0xEF1F, 0xFF3E, 0xCF5D, 0xDF7C, 0xAF9B, 0xBFBA, 0x8FD9, 0x9FF8, 
     0x6E17, 0x7E36, 0x4E55, 0x5E74, 0x2E93, 0x3EB2, 0x0ED1, 0x1EF0
 };
+unsigned short crc16CCITT;
 unsigned short CRC16_CCITT_calc(uint8_t input[], int length, unsigned short crc /*=0x0000*/) {
 	crc = 0;
     for(int i = 0; i < length; i++) {
@@ -46,6 +50,368 @@ unsigned short CRC16_CCITT_calc(uint8_t input[], int length, unsigned short crc 
     }
  
     return crc;
+}
+
+
+
+void prasing_message(uint8_t *message)
+{
+	int offset;
+	offset = 11;// de dem theo tai lieu
+	
+	if((message[0] == 0xF8)&&(message[1] == 0xF8)&&(message[9] == 0x97))//1150A VOR status message, 0x97 la do dai cua ban tin 
+	{
+		printf("\r\n---------1150A VOR---------------------\r\n");
+		crc16CCITT = CRC16_CCITT_calc((message+2),160,crc16CCITT);
+		if(((message[163]<<8)|message[162]) == crc16CCITT) 
+		{
+			//printf("Right CRC16\r\n");
+			vorconn = 1;
+			vorstatus.Tx1Ant						= bittest(message[offset+13],0);//13-b0
+			vorstatus.Tx1Main 					= bittest(message[offset+13],1);//13-b1
+			vorstatus.Tx1On							= bittest(message[offset+13],2);//13-b2
+			vorstatus.Tx2On							= bittest(message[offset+13],3);//13-b3
+			vorstatus.DualEquipment 			= bittest(message[offset+15],1);//15-b1
+			vorstatus.LocalControl 				= bittest(message[offset+12],4);//12-b4
+			vorstatus.IntPriAlarm 				= bittest(message[offset+10],6);//10-b6
+			vorstatus.IntMonBypass 				= bittest(message[offset+11],0);//11-b0
+			vorstatus.OnBattery 				= bittest(message[offset+8],2);//8-b2
+			vorstatus.ACFail					= bittest(message[offset+8],3);//8-b3
+			
+			vorstatus.Alert					= bittest(message[offset+8],0);//8-b0
+			
+			vorstatus.i9b5						  = bittest(message[offset+9],5);//9-b5 load?
+
+			
+			//vorstatus.i13b4						  = bittest(message[offset+13],4);//13-b4 bypass all?
+			
+			
+			vorstatus.year					=  message[11];
+			vorstatus.month					=  message[12];
+			vorstatus.date					=  message[13];
+			vorstatus.hour					=  message[14];
+			vorstatus.min	  				=  message[15];
+			vorstatus.sec	  				=  message[16];
+			
+			vorstatus.AzimuthAngle 	= (message[52]<<8)|message[51] ;
+			vorstatus.Mod30Hz 			= (message[54]<<8)|message[53] ;
+			vorstatus.Mod9960Hz 		= (message[56]<<8)|message[55] ;
+			vorstatus.Deviation 		= (message[58]<<8)|message[57] ;
+			vorstatus.RFlevel 			= (message[60]<<8)|message[59] ;
+			
+			if(vorstatus.Alert == 1) 						printf("Alert\r\n");
+			if(vorstatus.LocalControl == 1) 		printf("Local\r\n");
+			
+			if(vorstatus.Tx1Main == 1) 					printf("Main Tx1\r\n");
+			else if(vorstatus.Tx1Main == 0) 		printf("Main Tx2\r\n");
+			
+			if(vorstatus.Tx1Ant == 1) 					printf("Ant Tx1\r\n");
+			else if(vorstatus.Tx1Ant == 0) 			printf("Ant Tx2\r\n");
+			
+			
+			if(vorstatus.Tx1On == 1) 						printf("Tx1 ON\r\n");
+			else if(vorstatus.Tx1On == 0)				printf("Tx1 OFF\r\n");
+			
+			if(vorstatus.Tx2On == 1) 						printf("Tx2 ON\r\n");
+			else if(vorstatus.Tx2On == 0) 			printf("Tx2 OFF\r\n");
+			
+			if((vorstatus.i9b5 == 1)&&(vorstatus.Tx2On == 1)) 						printf("Tx2 LOAD\r\n");
+			else if((vorstatus.i9b5 == 0)&&(vorstatus.Tx1On == 1))				printf("Tx1 LOAD\r\n");
+			
+			if(vorstatus.DualEquipment == 1) 		printf("DualEquipment ON\r\n");
+			
+			
+			
+			if(vorstatus.OnBattery == 1) 				printf("OnBattery ON\r\n");
+			if(vorstatus.ACFail == 1) 					printf("ACFail ON\r\n");
+			
+			if(vorstatus.IntPriAlarm == 1) 		  printf("Integral PriAlarm\r\n");
+			//ko tim thay bit nao la Integral SecAlarm
+			if(vorstatus.IntMonBypass == 1) 		printf("Integral Bypass\r\n");
+	
+	
+			
+			//if(vorstatus.i13b4 == 1) 					printf("13b4 bypass all?\r\n");
+			
+			
+			if(((vorstatus.Tx1Ant==1) && (vorstatus.Tx1Main==1) && (vorstatus.Tx1On==1)) || 
+											((vorstatus.Tx1Ant==0) && (vorstatus.Tx1Main==0) && (vorstatus.Tx2On==1) && (vorstatus.DualEquipment==1)))
+			{
+				//Status = eMain;
+				printf("Vor eMain\r\n");
+				vorstatus.Status = 1;
+			}
+			else if((dmestatus.DualEquipment==1) 
+							&&(	((vorstatus.Tx1Ant==1) 	&& (vorstatus.Tx1Main == 0) && (vorstatus.Tx1On == 1))||
+									((vorstatus.Tx1Ant == 0)&& (vorstatus.Tx1Main == 1) && (vorstatus.Tx2On == 1) )	)	)
+			{
+				//Status = eSTANDBY;
+				printf("Vor STANDBY\r\n");
+				vorstatus.Status = 2;
+			}
+			else if(((vorstatus.Tx1On == 0)  && (vorstatus.Tx2On == 0))||((vorstatus.Tx1Ant == 1) && (vorstatus.Tx1On == 0))||((vorstatus.Tx1Ant == 0) && (vorstatus.Tx2On == 0)))
+			{
+				//Status = eOFF;
+				printf("eOFF\r\n");
+				vorstatus.Status = 0;
+			}
+			
+			if((vorstatus.Status != 0)&&
+				(vorstatus.LocalControl == 0) &&
+				(vorstatus.Mon1Bypass == 0) &&
+				(vorstatus.OnBattery == 0) &&
+				(vorstatus.ACFail == 0) )
+				{
+					//printf("VOR Go condition\r\n");
+				}
+			else
+			{
+				//printf("VOR No Go condition ALARM\r\n");
+			}
+			
+			
+			
+			printf("Ngay %d thang %d nam %d Gio %d Phut %d Giay %d\r\n",vorstatus.date,vorstatus.month,vorstatus.year, vorstatus.hour, vorstatus.min, vorstatus.sec);
+			printf("AzimuthAngle: %d \r\nMod30Hz: %d \r\nMod9960Hz: %d \r\nDeviation :%d \r\nRFlevel: %d\r\n",vorstatus.AzimuthAngle,vorstatus.Mod30Hz,vorstatus.Mod9960Hz,vorstatus.Deviation,vorstatus.RFlevel);
+		}
+	}
+	if((message[0] == 0xF8)&&(message[1] == 0xF8)&&(message[9] == 0x19))//1150 VOR status message
+	{
+		printf("\r\n----------1150 VOR PMDT---------------\r\n");
+		crc16CCITT = CRC16_CCITT_calc((message+2),34,crc16CCITT);
+		if(((message[37]<<8)|message[36]) == crc16CCITT) 
+		{
+			//printf("Right CRC16");
+			vorstatus.Tx1Ant 						= bittest(message[offset+11],3);//11-b3
+			vorstatus.Tx1Main 					= bittest(message[offset+11],4);//11-b4
+			vorstatus.Tx1On 						= bittest(message[offset+11],5);//11-b5
+			vorstatus.Tx2On 						= bittest(message[offset+11],6);//11-b6
+			vorstatus.DualEquipment 		= bittest(message[offset+24],0);//24-b0
+			vorstatus.LocalControl 			= bittest(message[offset+11],2);//11-b2
+			
+			vorstatus.Alert					    = bittest(message[offset+6],0);//6-b0
+			vorstatus.Mon1Bypass 			  = bittest(message[offset+10],3);//10-b3
+			vorstatus.i10b4 			      = bittest(message[offset+10],4);//10-b4 alarm
+			vorstatus.i10b2 			      = bittest(message[offset+10],2);//10-b2 load
+			
+			vorstatus.i10b0 			      = bittest(message[offset+10],0);//10-b0 
+			vorstatus.i10b1 			      = bittest(message[offset+10],1);//10-b1 
+			vorstatus.i10b5 			      = bittest(message[offset+10],5);//10-b5 
+			
+			vorstatus.OnBattery 				= bittest(message[offset+6],1);//6-b1
+			vorstatus.ACFail						= bittest(message[offset+6],2);//6-b2
+			
+			vorstatus.AzimuthAngle 	= (message[26]<<8)|message[25] ;
+			vorstatus.Mod30Hz 			= (message[28]<<8)|message[27] ;
+			vorstatus.Mod9960Hz 		= (message[30]<<8)|message[29] ;
+			vorstatus.Deviation 		= (message[32]<<8)|message[31] ;
+			vorstatus.RFlevel 			= (message[34]<<8)|message[33] ;
+			
+			vorstatus.year					=  message[11];
+			vorstatus.month					=  message[12];
+			vorstatus.date					=  message[13];
+			vorstatus.hour					=  message[14];
+			vorstatus.min	  				=  message[15];
+			vorstatus.sec	  				=  message[16];
+			
+			
+			if(vorstatus.Alert == 1) 						printf("Alert\r\n");
+			if(vorstatus.LocalControl == 1) 		printf("Local\r\n");
+			
+			if(vorstatus.Tx1Main == 1) 					printf("Main Tx1\r\n");
+			else if(vorstatus.Tx1Main == 0) 		printf("Main Tx2\r\n");
+			
+			//if(vorstatus.Tx1Ant == 1) 					printf("Ant Tx1\r\n");
+			//else if(vorstatus.Tx1Ant == 0) 			printf("Ant Tx2\r\n");
+			
+			
+			//if(vorstatus.Tx1On == 1) 						printf("Tx1 ON\r\n");
+			//else if(vorstatus.Tx1On == 0)				printf("Tx1 OFF\r\n");
+			if(vorstatus.Tx1On == 0)				printf("Tx1 OFF\r\n");
+			//if(vorstatus.Tx2On == 1) 						printf("Tx2 ON\r\n");
+			//else if(vorstatus.Tx2On == 0) 			printf("Tx2 OFF\r\n");
+			if(vorstatus.Tx2On == 0) 			printf("Tx2 OFF\r\n");
+			
+			if((vorstatus.i10b2 == 1)&&(vorstatus.Tx2On == 1)) 						printf("TX2 LOAD\r\n");
+			if((vorstatus.i10b2 == 1)&&(vorstatus.Tx1On == 1)) 						printf("TX1 LOAD\r\n");
+			
+			if((vorstatus.Tx1Ant == 1)&&(vorstatus.Tx1On == 1))  					printf("Ant Tx1\r\n");
+			else if((vorstatus.Tx1Ant == 0)&&(vorstatus.Tx2On == 1)) 			printf("Ant Tx2\r\n");
+			
+			if(vorstatus.i10b4 == 1) 						printf("Alarm\r\n");
+			
+			if(vorstatus.i10b0 == 1) 						printf("i10b0\r\n");
+			if(vorstatus.i10b1 == 1) 						printf("i10b1\r\n");
+			if(vorstatus.i10b5 == 1) 						printf("i10b5\r\n");
+			
+			//if(vorstatus.Tx1Ant == 1) 					printf("Tx1Ant ON\r\n");
+			//else if(vorstatus.Tx1Ant == 0) 			printf("Tx2Ant ON\r\n");
+			//if(vorstatus.Tx1Main == 1) 					printf("Tx1Main ON\r\n");
+			//else if(vorstatus.Tx1Main == 0) 		printf("Tx2Main ON\r\n");
+			//if(vorstatus.Tx1On == 1) 						printf("Tx1On ON\r\n");
+			//if(vorstatus.Tx2On == 1) 						printf("Tx2On ON\r\n");
+			//if(vorstatus.DualEquipment == 1) 		printf("DualEquipment ON\r\n");
+			//if(vorstatus.LocalControl == 1) 		printf("LocalControl ON\r\n");
+			if(vorstatus.Mon1Bypass == 1) 			printf("Bypass\r\n");
+			//if(vorstatus.OnBattery == 1) 				printf("OnBattery ON\r\n");
+			//if(vorstatus.ACFail == 1) 					printf("ACFail ON\r\n");
+			
+			if(((vorstatus.Tx1Ant==1) && (vorstatus.Tx1Main==1) && (vorstatus.Tx1On==1)) || 
+											((vorstatus.Tx1Ant==0) && (vorstatus.Tx1Main==0) && (vorstatus.Tx2On==1) && (vorstatus.DualEquipment==1)))
+			{
+				//Status = eMain;
+				//printf("Vor Main\r\n");
+				vorstatus.Status = 1;
+			}
+			else if((dmestatus.DualEquipment==1) 
+							&&(	((vorstatus.Tx1Ant==1) 	&& (vorstatus.Tx1Main == 0) && (vorstatus.Tx1On == 1))||
+									((vorstatus.Tx1Ant == 0)&& (vorstatus.Tx1Main == 1) && (vorstatus.Tx2On == 1) )	)	)
+			{
+				//Status = eSTANDBY;
+				//printf("Vor STANDBY\r\n");
+				vorstatus.Status = 2;
+			}
+			else if(((vorstatus.Tx1On == 0)  && (vorstatus.Tx2On == 0))||((vorstatus.Tx1Ant == 1) && (vorstatus.Tx1On == 0))||((vorstatus.Tx1Ant == 0) && (vorstatus.Tx2On == 0)))
+			{
+				//Status = eOFF;
+				//printf("eOFF\r\n");
+				vorstatus.Status = 0;
+			}
+			
+			if((vorstatus.Status != 0)&&
+				(vorstatus.LocalControl == 0) &&
+				(vorstatus.Mon1Bypass == 0) &&
+				(vorstatus.OnBattery == 0) &&
+				(vorstatus.ACFail == 0) )
+				{
+					//printf("VOR Go condition\r\n");
+				}
+			else
+			{
+				//printf("VOR No Go condition ALARM\r\n");
+			}
+			
+			printf("Ngay %d thang %d nam %d Gio %d Phut %d Giay %d\r\n",vorstatus.date,vorstatus.month,vorstatus.year, vorstatus.hour, vorstatus.min, vorstatus.sec);
+			printf("AzimuthAngle: %d \r\nMod30Hz: %d \r\nMod9960Hz: %d \r\nDeviation :%d \r\nRFlevel: %d \r\n",vorstatus.AzimuthAngle,vorstatus.Mod30Hz,vorstatus.Mod9960Hz,vorstatus.Deviation,vorstatus.RFlevel);
+		}
+	}
+	
+	if((message[0] == 0xF8)&&(message[1] == 0xF8)&&(message[9] == 0x34))//DME status message
+	{
+		printf("\r\n------------------DME---------------------------\r\n");
+		crc16CCITT = CRC16_CCITT_calc((message+2),61,crc16CCITT);
+		//printf("U1 CRC16 CCITT: 0x%4X %4X \r\n",crc16CCITT,(message[64]<<8)|message[63]);
+		if(((message[64]<<8)|message[63]) == crc16CCITT) 
+		{
+			//printf("Right CRC16");
+			dmeconn = 1;
+			dmestatus.DelayUs 			= (message[32]<<8)|message[31] ;
+			dmestatus.SpacingUs			= (message[34]<<8)|message[33];
+			dmestatus.TxPowerWatts	= (message[36]<<8)|message[35];
+			dmestatus.Efficiency 		= (message[38]<<8)|message[37];
+			dmestatus.PRFppps				= (message[40]<<8)|message[39];
+			dmestatus.ERP						=  message[52];
+			dmestatus.year					=  message[11];
+			dmestatus.month					=  message[12];
+			dmestatus.date					=  message[13];
+			dmestatus.hour					=  message[14];
+			dmestatus.min	  				=  message[15];
+			dmestatus.sec	  				=  message[16];
+			
+			dmestatus.MaintenanceAlert 	= bittest(message[offset+8],0); //8-b0
+			dmestatus.Tx1Ant 						= bittest(message[offset+13],0);//13-b0
+			dmestatus.Tx1Main 					= bittest(message[offset+13],1);//13-b1
+			dmestatus.Tx1On 						= bittest(message[offset+13],2);//13-b2
+			dmestatus.Tx2On 						= bittest(message[offset+13],3);//13-b3
+			dmestatus.DualEquipment 		= bittest(message[offset+15],0);//15-b0
+			dmestatus.LocalControl 			= bittest(message[offset+12],4);//12-b4
+			dmestatus.IntPriAlarm 			= bittest(message[offset+10],0);//10-b0
+			dmestatus.IntMonBypass 			= bittest(message[offset+10],2);//10-b2
+			dmestatus.OnBattery 				= bittest(message[offset+8],2);//8-b2
+			dmestatus.ACFail						= bittest(message[offset+8],3);//8-b3
+			
+			dmestatus.i9b5						  = bittest(message[offset+9],5);//9-b5
+			//dmestatus.i10b2						  = bittest(message[offset+10],2);//10-b2
+			dmestatus.i10b3						  = bittest(message[offset+10],3);//10-b3
+			dmestatus.i10b5						  = bittest(message[offset+10],5);//10-b5
+			dmestatus.i11b0						  = bittest(message[offset+11],0);//11-b0
+			dmestatus.i11b1						  = bittest(message[offset+11],1);//11-b1
+			//dmestatus.i13b4						  = bittest(message[offset+13],4);//13-b4
+			
+			if(dmestatus.MaintenanceAlert == 1) printf("Alert\r\n");
+			if(dmestatus.LocalControl == 1) 		printf("Local\r\n");
+			if(dmestatus.DualEquipment == 1) 		printf("Dual Equipment\r\n");
+			
+			if(dmestatus.Tx1Main == 1) 					printf("Main Tx1\r\n");
+			else if(dmestatus.Tx1Main == 0) 		printf("Main Tx2\r\n");
+			
+			if((dmestatus.Tx1Ant == 1)&&(dmestatus.Tx1On == 1)) 					printf("Ant Tx1\r\n");
+			else if((dmestatus.Tx1Ant == 0) &&(dmestatus.Tx2On == 1))			printf("Ant Tx2\r\n");
+			
+			if((dmestatus.i9b5 == 1)&&(dmestatus.Tx2On == 1)) 						printf("Tx2 LOAD\r\n");
+			else if((dmestatus.i9b5 == 0)&&(dmestatus.Tx1On == 1))				printf("Tx1 LOAD\r\n");
+			
+			if(dmestatus.Tx1On == 1) 						printf("Tx1 ON\r\n");
+			else if(dmestatus.Tx1On == 0)				printf("Tx1 OFF\r\n");
+			
+			if(dmestatus.Tx2On == 1) 						printf("Tx2 ON\r\n");
+			else if(dmestatus.Tx2On == 0)				printf("Tx2 OFF\r\n");
+			
+			
+			
+			if(dmestatus.IntPriAlarm == 1) 			printf("Integral PriAlarm\r\n");
+			if(dmestatus.i11b0 == 1) 					  printf("Integral SecAlarm\r\n");//?
+			if(dmestatus.IntMonBypass == 1) 		printf("Integral Bypass\r\n");
+			
+			//if(dmestatus.i10b2 == 1) 					printf("Integral Bypass \r\n");
+			
+			if(dmestatus.i10b3 == 1) 					printf("Standby PriAlarm \r\n");
+			if(dmestatus.i11b1 == 1) 					printf("Standby SecAlarm \r\n");
+			if(dmestatus.i10b5 == 1) 					printf("Standby Bypass \r\n");
+			//if(dmestatus.i13b4 == 1) 					printf("13b4 bypass all\r\n");
+			if(dmestatus.OnBattery == 1) 				printf("OnBattery\r\n");
+			if(dmestatus.ACFail == 1) 					printf("ACFail\r\n");
+			
+			if(((dmestatus.Tx1Ant==1) && (dmestatus.Tx1Main==1) && (dmestatus.Tx1On==1)) || 
+											((dmestatus.Tx1Ant==0) && (dmestatus.Tx1Main==0) && (dmestatus.Tx2On==1) && (dmestatus.DualEquipment==1)))
+			{
+				//Status = eMain;
+				printf("eMain\r\n");
+				dmestatus.Status = 1;
+			}
+			else if((dmestatus.DualEquipment==1) 
+							&&(	((dmestatus.Tx1Ant==1) && (dmestatus.Tx1Main == 0) && (dmestatus.Tx1On == 1))||
+									((dmestatus.Tx1Ant == 0)&& (dmestatus.Tx1Main == 1) && (dmestatus.Tx2On == 1) )	)	)
+			{
+				//Status = eSTANDBY;
+				printf("eSTANDBY\r\n");
+				dmestatus.Status = 2;
+			}
+			else if(((dmestatus.Tx1On == 0)  && (dmestatus.Tx2On == 0))||((dmestatus.Tx1Ant == 1) && (dmestatus.Tx1On == 0))||((dmestatus.Tx1Ant == 0) && (dmestatus.Tx2On == 0)))
+			{
+				//Status = eOFF;
+				printf("eOFF\r\n");
+				dmestatus.Status = 0;
+			}
+			
+			if((dmestatus.Status != 0)&&
+				(dmestatus.LocalControl == 0) &&
+				(dmestatus.IntPriAlarm == 0) &&
+				(dmestatus.IntMonBypass == 0) &&
+				(dmestatus.OnBattery == 0) &&
+				(dmestatus.ACFail == 0) )
+				{
+					printf("Go condition\r\n");
+				}
+			else
+			{
+				printf("No Go condition ALARM\r\n");
+			}
+			printf("Ngay %d thang %d nam %d Gio %d Phut %d Giay %d\r\n",dmestatus.date,dmestatus.month,dmestatus.year, dmestatus.hour, dmestatus.min, dmestatus.sec);
+			printf("DME Delay: %d us,Spacing: %d us,TxPower: %d Watts,Efficiency :%d %%,PRF: %d ppps,ERP: %d\r\n",dmestatus.DelayUs,dmestatus.SpacingUs,dmestatus.TxPowerWatts,dmestatus.Efficiency,dmestatus.PRFppps,dmestatus.ERP);
+		}
+	}
+	
 }
 
 
